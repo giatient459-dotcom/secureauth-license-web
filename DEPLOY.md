@@ -31,7 +31,7 @@ Vercel **không lưu file** `data/` bền vững.
 
 | Name | Value |
 |------|--------|
-| `ADMIN_USER` | admin |
+| `ADMIN_USER` | tên đăng nhập admin của bạn |
 | `ADMIN_PASS` | mật khẩu mạnh |
 | `API_SIGNING_SECRET` | random dài |
 | `PLUGIN_API_TOKEN` | random dài |
