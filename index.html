@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SecureAuth License Admin</title>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --card: #1a2332;
+      --border: #2d3a4f;
+      --text: #e7ecf3;
+      --muted: #8b9bb4;
+      --accent: #3b82f6;
+      --ok: #22c55e;
+      --bad: #ef4444;
+      --warn: #f59e0b;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; font-family: ui-sans-serif, system-ui, sans-serif;
+      background: var(--bg); color: var(--text); line-height: 1.45;
+    }
+    header {
+      padding: 1rem 1.5rem; border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+      background: var(--card);
+    }
+    header h1 { margin: 0; font-size: 1.15rem; font-weight: 600; }
+    header span { color: var(--muted); font-size: 0.85rem; }
+    main { max-width: 1100px; margin: 0 auto; padding: 1.25rem; }
+    .card {
+      background: var(--card); border: 1px solid var(--border);
+      border-radius: 12px; padding: 1.25rem; margin-bottom: 1.25rem;
+    }
+    .card h2 { margin: 0 0 1rem; font-size: 1rem; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+    form.grid {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: .75rem; align-items: end;
+    }
+    label { display: flex; flex-direction: column; gap: .35rem; font-size: .8rem; color: var(--muted); }
+    input, select, button, textarea {
+      font: inherit; border-radius: 8px; border: 1px solid var(--border);
+      background: var(--bg); color: var(--text); padding: .55rem .7rem;
+    }
+    button {
+      background: var(--accent); border-color: transparent; cursor: pointer; font-weight: 600;
+    }
+    button.secondary { background: transparent; border-color: var(--border); }
+    button.danger { background: var(--bad); }
+    button:hover { filter: brightness(1.08); }
+    table { width: 100%; border-collapse: collapse; font-size: .88rem; }
+    th, td { text-align: left; padding: .55rem .4rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+    th { color: var(--muted); font-weight: 600; font-size: .75rem; text-transform: uppercase; }
+    .badge {
+      display: inline-block; padding: .15rem .45rem; border-radius: 6px; font-size: .72rem; font-weight: 700;
+    }
+    .badge.ok { background: #14532d; color: #bbf7d0; }
+    .badge.bad { background: #7f1d1d; color: #fecaca; }
+    .key { font-family: ui-monospace, monospace; font-size: .78rem; word-break: break-all; }
+    .actions { display: flex; flex-wrap: wrap; gap: .35rem; }
+    .actions button { padding: .3rem .5rem; font-size: .75rem; }
+    .msg { margin-top: .75rem; padding: .6rem .8rem; border-radius: 8px; background: #0c4a6e; font-size: .85rem; }
+    .msg.err { background: #7f1d1d; }
+    .empty { color: var(--muted); padding: 1rem 0; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>SecureAuth · License Admin</h1>
+    <span id="clock"></span>
+  </header>
+  <main>
+    <section class="card">
+      <h2>Tạo license mới</h2>
+      <form id="createForm" class="grid">
+        <label>Khách hàng<input name="customer" required placeholder="TenKH" /></label>
+        <label>Plugin<input name="plugin" value="SecureAuth" /></label>
+        <label>HWID (để trống = bind lần đầu)<input name="hwid" placeholder="optional" /></label>
+        <label>Số ngày hiệu lực<input name="days" type="number" min="1" value="365" /></label>
+        <label>Ghi chú<input name="note" placeholder="order #..." /></label>
+        <button type="submit">Tạo key</button>
+      </form>
+      <div id="createMsg" hidden class="msg"></div>
+    </section>
+
+    <section class="card">
+      <h2>Danh sách license</h2>
+      <div style="margin-bottom:.75rem">
+        <button type="button" class="secondary" id="btnRefresh">Làm mới</button>
+      </div>
+      <div id="tableWrap" class="empty">Đang tải…</div>
+    </section>
+  </main>
+  <script>
+    const $ = (s) => document.querySelector(s);
+    function fmt(ts) {
+      if (!ts) return '—';
+      return new Date(ts).toLocaleString();
+    }
+    function authHeader() {
+      // Browser already sent Basic via requireAdmin on /admin static;
+      // API calls from same origin need credentials.
+      return {};
+    }
+
+    async function api(path, opts = {}) {
+      const res = await fetch(path, {
+        ...opts,
+        headers: {
+          'Content-Type': 'application/json',
+          ...(opts.headers || {}),
+        },
+        credentials: 'same-origin',
+      });
+      if (res.status === 401) {
+        alert('Unauthorized — reload and login');
+        throw new Error('401');
+      }
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || data.reason || res.statusText);
+      return data;
+    }
+
+    async function loadList() {
+      const wrap = $('#tableWrap');
+      try {
+        const { licenses } = await api('/api/admin/licenses');
+        if (!licenses.length) {
+          wrap.innerHTML = '<div class="empty">Chưa có license.</div>';
+          return;
+        }
+        const rows = licenses
+          .slice()
+          .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
+          .map((l) => {
+            const active = l.active && (!l.expiresAt || l.expiresAt > Date.now());
+            return `<tr>
+              <td>
+                <div><strong>${escapeHtml(l.customer)}</strong></div>
+                <div class="key">${escapeHtml(l.key)}</div>
+                <div style="color:var(--muted);font-size:.75rem">${escapeHtml(l.note || '')}</div>
+              </td>
+              <td>${escapeHtml(l.plugin || '')}<br/><span class="key">${escapeHtml(l.hwid || '(chưa bind)')}</span></td>
+              <td><span class="badge ${active ? 'ok' : 'bad'}">${active ? 'ACTIVE' : 'OFF'}</span><br/>
+                <span style="font-size:.75rem;color:var(--muted)">HSD: ${fmt(l.expiresAt)}</span></td>
+              <td style="font-size:.75rem;color:var(--muted)">Tạo: ${fmt(l.createdAt)}<br/>Check: ${fmt(l.lastCheckAt)}<br/>IP: ${escapeHtml(l.lastCheckIp || '—')}</td>
+              <td class="actions">
+                <button type="button" data-act="copy" data-key="${escapeAttr(l.key)}">Copy key</button>
+                <button type="button" class="secondary" data-act="reset" data-id="${escapeAttr(l.id)}">Reset HWID</button>
+                <button type="button" class="secondary" data-act="revoke" data-id="${escapeAttr(l.id)}">Revoke</button>
+                <button type="button" class="danger" data-act="del" data-id="${escapeAttr(l.id)}">Xóa</button>
+              </td>
+            </tr>`;
+          })
+          .join('');
+        wrap.innerHTML = `<table>
+          <thead><tr><th>Key / khách</th><th>Plugin / HWID</th><th>Trạng thái</th><th>Thời gian</th><th></th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>`;
+      } catch (e) {
+        wrap.innerHTML = `<div class="empty">Lỗi: ${escapeHtml(e.message)}</div>`;
+      }
+    }
+
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    }
+    function escapeAttr(s) {
+      return escapeHtml(s).replace(/\n/g, '');
+    }
+
+    $('#createForm').addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      const fd = new FormData(ev.target);
+      const body = {
+        customer: fd.get('customer'),
+        plugin: fd.get('plugin'),
+        hwid: fd.get('hwid') || '',
+        days: Number(fd.get('days') || 365),
+        note: fd.get('note') || '',
+      };
+      const msg = $('#createMsg');
+      try {
+        const lic = await api('/api/admin/licenses', { method: 'POST', body: JSON.stringify(body) });
+        msg.hidden = false;
+        msg.className = 'msg';
+        msg.innerHTML = `Đã tạo key cho <b>${escapeHtml(lic.customer)}</b>:<br/><span class="key">${escapeHtml(lic.key)}</span>`;
+        ev.target.reset();
+        ev.target.plugin.value = 'SecureAuth';
+        ev.target.days.value = 365;
+        loadList();
+      } catch (e) {
+        msg.hidden = false;
+        msg.className = 'msg err';
+        msg.textContent = e.message;
+      }
+    });
+
+    $('#tableWrap').addEventListener('click', async (ev) => {
+      const btn = ev.target.closest('button[data-act]');
+      if (!btn) return;
+      const act = btn.dataset.act;
+      const id = btn.dataset.id;
+      try {
+        if (act === 'copy') {
+          await navigator.clipboard.writeText(btn.dataset.key);
+          btn.textContent = 'Copied';
+          setTimeout(() => (btn.textContent = 'Copy key'), 1200);
+          return;
+        }
+        if (act === 'reset' && confirm('Reset HWID — máy khác có thể bind?')) {
+          await api('/api/admin/licenses/' + id + '/reset-hwid', { method: 'POST', body: '{}' });
+        }
+        if (act === 'revoke' && confirm('Revoke license này?')) {
+          await api('/api/admin/licenses/' + id + '/revoke', { method: 'POST', body: '{}' });
+        }
+        if (act === 'del' && confirm('Xóa vĩnh viễn?')) {
+          await api('/api/admin/licenses/' + id, { method: 'DELETE' });
+        }
+        loadList();
+      } catch (e) {
+        alert(e.message);
+      }
+    });
+
+    $('#btnRefresh').addEventListener('click', loadList);
+    setInterval(() => { $('#clock').textContent = new Date().toLocaleString(); }, 1000);
+    loadList();
+  </script>
+</body>
+</html>
